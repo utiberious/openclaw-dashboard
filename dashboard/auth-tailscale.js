@@ -1,13 +1,13 @@
 /**
  * Tailscale whois 认证中间件
  *
- * 原理：收到请求时调用 `tailscale whois <remoteIP>` 查询访问者的 Tailscale 身份。
- * 身份由 Tailscale daemon 保证，无法伪造。
+ * 原理：收到请求时调用 `tailscale whois <remoteIP>` 向 Tailscale daemon
+ * 查询访问者的真实身份。身份由 Tailscale 保证，无法伪造。
  *
  * 配置（本地 .env，不进 git）：
  *   TAILSCALE_AUTH=true            # 启用认证（默认 true）
- *   TAILSCALE_BIN=                 # tailscale 可执行路径（自动探测，通常不需要手动设置）
- *   TAILSCALE_SOCKET=              # tailscaled socket 路径（自动探测）
+ *   TAILSCALE_BIN=/path/tailscale  # tailscale 可执行路径（默认：PATH 中的 tailscale）
+ *   TAILSCALE_SOCKET=/path/.sock   # tailscaled socket 路径（默认：不传，daemon 自行寻址）
  *   TAILSCALE_ALLOWED_LOGINS=      # 留空 = 允许所有 tailnet 成员；逗号分隔 = 白名单
  *   TAILSCALE_ADMIN_LOGINS=        # 可执行管理操作的用户，逗号分隔
  */
@@ -16,44 +16,14 @@
 
 const { execFile } = require('child_process');
 const { promisify } = require('util');
-const fs = require('fs');
 const execFileAsync = promisify(execFile);
 
-const AUTH_ENABLED = process.env.TAILSCALE_AUTH !== 'false';
+const AUTH_ENABLED  = process.env.TAILSCALE_AUTH !== 'false';
+const TS_BIN        = process.env.TAILSCALE_BIN    || 'tailscale';
+const TS_SOCKET     = process.env.TAILSCALE_SOCKET  || null;
 
-// 自动探测 tailscale 可执行路径
-function findTailscaleBin() {
-  if (process.env.TAILSCALE_BIN) return process.env.TAILSCALE_BIN;
-  const candidates = [
-    '/Users/lume/.homebrew/bin/tailscale',
-    '/opt/homebrew/bin/tailscale',
-    '/usr/local/bin/tailscale',
-    '/usr/bin/tailscale',
-  ];
-  for (const p of candidates) {
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
-  }
-  return 'tailscale'; // fallback，依赖 PATH
-}
-
-// 自动探测 socket 路径
-function findTailscaleSocket() {
-  if (process.env.TAILSCALE_SOCKET) return process.env.TAILSCALE_SOCKET;
-  const candidates = [
-    '/var/run/tailscale/tailscaled.sock',
-    '/tmp/tailscale/tailscaled.sock',
-  ];
-  for (const p of candidates) {
-    try { fs.accessSync(p); return p; } catch {}
-  }
-  return null;
-}
-
-const TS_BIN    = findTailscaleBin();
-const TS_SOCKET = findTailscaleSocket();
-
-console.log(`[auth] tailscale bin: ${TS_BIN}`);
-console.log(`[auth] tailscale socket: ${TS_SOCKET || '(default)'}`);
+console.log(`[auth] tailscale bin:    ${TS_BIN}`);
+console.log(`[auth] tailscale socket: ${TS_SOCKET || '(not set, daemon default)'}`);
 
 const getAllowed = () =>
   (process.env.TAILSCALE_ALLOWED_LOGINS || '')
@@ -69,11 +39,12 @@ const getAdmins = () =>
  * @returns {{ login, displayName, tailscaleIP } | null}
  */
 async function whois(ip) {
-  // 剥离端口（IPv4: 1.2.3.4:56789 / IPv6: [::1]:56789）
   const addr = ip.replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
   try {
-    const args = ['whois', '--json', addr];
-    if (TS_SOCKET) args.splice(0, 0, `--socket=${TS_SOCKET}`);
+    const args = [];
+    if (TS_SOCKET) args.push(`--socket=${TS_SOCKET}`);
+    args.push('whois', '--json', addr);
+
     const { stdout } = await execFileAsync(TS_BIN, args, { timeout: 3000 });
     const data = JSON.parse(stdout);
     const login = data?.UserProfile?.LoginName || null;
