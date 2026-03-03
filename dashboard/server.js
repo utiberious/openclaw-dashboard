@@ -16,6 +16,11 @@ const fs = require('fs');
 const fsPromises = require('fs').promises;
 const osUtils = require('node-os-utils');
 
+// 加载本地 .env（不进 git）
+try { require("fs").readFileSync(require("path").join(__dirname, ".env"), "utf8").split("\n").forEach(line => { const [k,...v]=line.split("="); if(k&&!k.startsWith("#")) process.env[k.trim()]=v.join("=").trim(); }); } catch {}
+
+const { tailscaleAuth } = require("./auth-tailscale");
+
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -36,6 +41,9 @@ console.log('CSS文件存在:', fs.existsSync(path.join(staticDir, 'css', 'style
 
 // 中间件
 app.use(cors());
+
+// Tailscale 身份认证（详见 auth-tailscale.js 和 .env.example）
+app.use(tailscaleAuth);
 app.use(express.json());
 
 // 静态文件服务 - 必须在所有API路由之前

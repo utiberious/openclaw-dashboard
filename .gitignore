@@ -1,0 +1,8 @@
+# 本地环境配置（含敏感信息，不进 git）
+dashboard/.env
+
+# Node 依赖
+dashboard/node_modules/
+
+# 系统文件
+.DS_Store
